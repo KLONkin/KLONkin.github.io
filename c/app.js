@@ -33,7 +33,7 @@
 
   function confirmAction() {
     bm.authenticate({ reason: "Подтвердить действие" }, function (ok, token) {
-      if (!ok || !token) { say("Не подтверждено."); return; }
+      if (!ok || !token) { say("Не подтверждено."); showRetry(); return; }
       crypto.subtle.importKey("raw", utf8(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
         .then(function (key) { return crypto.subtle.sign("HMAC", key, utf8(nonce)); })
         .then(function (sig) { send({ t: "confirm", n: nonce, d: bm.deviceId, h: hex(sig) }); })
@@ -41,12 +41,25 @@
     });
   }
 
+  function showRetry() {
+    btn.textContent = "Повторить";
+    btn.disabled = false;
+    btn.hidden = false;
+    btn.onclick = function () { btn.disabled = true; confirmAction(); };
+  }
+
   bm.init(function () {
     if (!bm.isBiometricAvailable) { say("На этом устройстве биометрия недоступна или не настроена."); return; }
     if (mode === "c" && !bm.isBiometricTokenSaved) { say("Устройство не подключено. Сначала подключите его."); return; }
-    say(mode === "e" ? "Подключить это устройство?" : "Подтвердить действие?");
-    btn.textContent = mode === "e" ? "Подключить" : "Подтвердить";
+    if (mode === "c") {
+      // подтверждение — сразу, без лишней кнопки: окно и так открыто нажатием «🔐 Подтвердить» в чате
+      say("Подтверждение…");
+      confirmAction();
+      return;
+    }
+    say("Подключить это устройство?");
+    btn.textContent = "Подключить";
     btn.hidden = false;
-    btn.onclick = function () { btn.disabled = true; (mode === "e" ? enroll : confirmAction)(); };
+    btn.onclick = function () { btn.disabled = true; enroll(); };
   });
 })();
