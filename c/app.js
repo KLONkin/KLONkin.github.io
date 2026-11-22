@@ -38,15 +38,41 @@
   }
   function fail(text, err) {
     clearTimeout(waitTimer);
+    hideButton();
     say(text);
     diag(err ? String(err.message || err) : "");
     showButton("Повторить", start);
   }
+  // Кнопка — нативная кнопка Telegram внизу окна (видна и в свёрнутом окне); без неё — кнопка на странице.
+  var mainHandler = null;
+  var useMain = !!(tg.MainButton && tg.isVersionAtLeast && tg.isVersionAtLeast("6.1"));
+  function hideButton() {
+    btn.hidden = true;
+    if (useMain) { if (mainHandler) { tg.MainButton.offClick(mainHandler); mainHandler = null; } tg.MainButton.hide(); }
+  }
   function showButton(label, fn) {
+    var go = function () { hideButton(); fn(); };
+    if (useMain) {
+      hideButton();
+      mainHandler = go;
+      tg.MainButton.setText(label);
+      tg.MainButton.onClick(mainHandler);
+      tg.MainButton.show();
+      return;
+    }
     btn.textContent = label;
     btn.disabled = false;
     btn.hidden = false;
-    btn.onclick = function () { btn.disabled = true; btn.hidden = true; fn(); };
+    btn.onclick = go;
+  }
+  // Android: окно отпечатка не появляется, пока окно мини-приложения не развернулось до конца.
+  function whenExpanded(cb) {
+    var done = false;
+    function go() { if (done) { return; } done = true; tg.offEvent("viewportChanged", onVp); setTimeout(cb, 300); }
+    function onVp(e) { if (tg.isExpanded && (!e || e.isStateStable)) { go(); } }
+    if (tg.isExpanded) { go(); return; }
+    tg.onEvent("viewportChanged", onVp);
+    setTimeout(go, 1500);
   }
 
   // Доступ бота к биометрии: если сброшен (переустановка Telegram, выключено в настройках бота) — запросить снова.
@@ -90,7 +116,7 @@
       try {
         bm.authenticate({ reason: "Подтвердить действие" }, function (ok, token) {
           clearTimeout(waitTimer);
-          btn.hidden = true;
+          hideButton();
           if (!ok || !token) { fail("Не подтверждено."); return; }
           crypto.subtle.importKey("raw", utf8(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
             .then(function (key) { return crypto.subtle.sign("HMAC", key, utf8(nonce)); })
@@ -134,7 +160,12 @@
         showButton(bm.biometricType === "face" ? "Подтвердить лицом" : "Подтвердить отпечатком", function () { confirmAction(false); });
         return;
       }
-      confirmAction(needTap);
+      if (needTap) {
+        say("Открываю окно отпечатка…");
+        whenExpanded(function () { confirmAction(true); });
+        return;
+      }
+      confirmAction(false);
     });
   } catch (e) { say("Биометрия Telegram недоступна."); diag(String(e.message || e)); }
 })();
