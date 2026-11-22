@@ -76,28 +76,42 @@
     });
   }
 
-  function confirmAction() {
+  // auto — попытка сразу при открытии (Android на пробу): нет ответа за 3 с → кнопка для запуска касанием.
+  function confirmAction(auto) {
     say("Приложите палец / посмотрите в камеру…");
     withAccess("Подтверждать действия биометрией", function () {
       clearTimeout(waitTimer);
-      waitTimer = setTimeout(function () {
-        fail("Окно отпечатка не появилось.", "нет ответа 10 с");
-      }, 10000);
+      waitTimer = auto
+        ? setTimeout(function () {
+            say("Подтвердить действие?");
+            showButton(bm.biometricType === "face" ? "Подтвердить лицом" : "Подтвердить отпечатком", function () { confirmAction(false); });
+          }, 3000)
+        : setTimeout(function () { fail("Окно отпечатка не появилось.", "нет ответа 10 с"); }, 10000);
       try {
         bm.authenticate({ reason: "Подтвердить действие" }, function (ok, token) {
           clearTimeout(waitTimer);
+          btn.hidden = true;
           if (!ok || !token) { fail("Не подтверждено."); return; }
           crypto.subtle.importKey("raw", utf8(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
             .then(function (key) { return crypto.subtle.sign("HMAC", key, utf8(nonce)); })
             .then(function (sig) { say("Отправка…"); send({ t: "confirm", n: nonce, d: bm.deviceId, h: hex(sig) }); })
             .catch(function (e) { fail("Ошибка подписи.", e); });
         });
-      } catch (e) { fail("Не удалось открыть окно отпечатка.", e); }
+      } catch (e) {
+        if (/AuthenticationRequested/.test(String(e.message || e))) {
+          // первая автоматическая попытка всё ещё числится в Telegram — повтор возможен только с нового окна
+          clearTimeout(waitTimer);
+          say("Окно отпечатка зависло. Закройте это окно и нажмите «🔐 Подтвердить» в чате ещё раз.");
+          diag(String(e.message || e));
+          return;
+        }
+        fail("Не удалось открыть окно отпечатка.", e);
+      }
     });
   }
 
   function start() {
-    if (mode === "e") { enroll(); } else { confirmAction(); }
+    if (mode === "e") { enroll(); } else { confirmAction(false); }
   }
 
   try {
@@ -112,12 +126,15 @@
         showButton("Подключить", enroll);
         return;
       }
-      if (needTap) {
+      // окно открыто нажатием «🔐 Подтвердить» в чате — отпечаток / Face ID сразу;
+      // Android (на пробу, 22.11.2026): если окно отпечатка не появилось за 3 с — кнопка для запуска касанием.
+      // Без выданного доступа сразу не пробуем: запрос доступа на Android надёжнее по касанию.
+      if (needTap && !bm.isAccessGranted) {
         say("Подтвердить действие?");
-        showButton(bm.biometricType === "face" ? "Подтвердить лицом" : "Подтвердить отпечатком", confirmAction);
+        showButton(bm.biometricType === "face" ? "Подтвердить лицом" : "Подтвердить отпечатком", function () { confirmAction(false); });
         return;
       }
-      confirmAction();   // iPhone: окно открыто нажатием «🔐 Подтвердить» в чате — Face ID сразу
+      confirmAction(needTap);
     });
   } catch (e) { say("Биометрия Telegram недоступна."); diag(String(e.message || e)); }
 })();
